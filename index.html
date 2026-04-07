@@ -1,0 +1,1775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inside Gemma 4 — From Embeddings to Output</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;600&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,700;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f7f4ee;
+  --bg2: #eeeae0;
+  --surface: #ffffff;
+  --border: #d8d2c4;
+  --border2: #c4bfb0;
+  --text: #2a2520;
+  --muted: #7a7268;
+  --accent: #c05a2a;       /* warm terracotta */
+  --accent2: #2a6e9e;      /* steel blue */
+  --accent3: #4a8c5c;      /* sage green */
+  --accent4: #8a4a9e;      /* purple */
+  --accent5: #9e7a2a;      /* amber */
+  --glow: rgba(192,90,42,0.08);
+  --mono: 'IBM Plex Mono', monospace;
+  --serif: 'Lora', Georgia, serif;
+  --display: 'Fraunces', Georgia, serif;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--serif);
+  line-height: 1.75;
+  overflow-x: hidden;
+}
+
+/* ─── NAV ─── */
+nav {
+  position: sticky; top:0; z-index:100;
+  background: rgba(247,244,238,0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  display: flex; align-items: center; gap: 0; height: 52px;
+  overflow-x: auto; white-space: nowrap;
+}
+.nav-brand { font-family: var(--display); font-size: 0.95rem; font-weight: 700; color: var(--accent); margin-right: 2rem; flex-shrink:0; }
+nav a { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); text-decoration: none; padding: 0 0.75rem; height: 52px; display: inline-flex; align-items: center; border-bottom: 2px solid transparent; transition: all 0.2s; flex-shrink:0; }
+nav a:hover { color: var(--text); border-bottom-color: var(--accent); }
+.nav-series { margin-left: auto; display: flex; gap: 0.5rem; flex-shrink:0; }
+.nav-series a { font-size: 0.65rem; padding: 3px 10px; border: 1px solid var(--border); border-radius: 20px; height: auto; border-bottom: 1px solid var(--border); color: var(--muted); }
+.nav-series a:hover { border-color: var(--accent2); color: var(--accent2); }
+
+/* ─── HERO ─── */
+.hero {
+  min-height: 92vh; display: flex; align-items: center; justify-content: center;
+  padding: 4rem 2rem; position: relative; overflow: hidden;
+  background: linear-gradient(160deg, #f7f4ee 0%, #ede8dc 60%, #e4dfd4 100%);
+}
+.hero-bg-text {
+  position: absolute; font-family: var(--display); font-size: 22vw; font-weight: 700;
+  color: rgba(192,90,42,0.04); line-height: 1; top: 50%; left: 50%;
+  transform: translate(-50%, -50%); white-space: nowrap; pointer-events: none; user-select: none;
+}
+.hero-content { position: relative; max-width: 820px; }
+.hero-series { font-family: var(--mono); font-size: 0.72rem; color: var(--accent); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.75rem; }
+.hero-series::before { content:'Part 3 of 3 ·'; color:var(--muted); }
+h1 { font-family: var(--display); font-size: clamp(2.6rem, 6vw, 4.5rem); font-weight: 700; line-height: 1.08; letter-spacing: -0.02em; margin-bottom: 1.5rem; color: var(--text); }
+h1 em { font-style: italic; color: var(--accent); }
+.hero-sub { font-size: 1.15rem; color: var(--muted); max-width: 600px; margin-bottom: 2rem; line-height: 1.7; }
+.breadcrumb { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 3rem; }
+.bc-item { font-family: var(--mono); font-size: 0.72rem; padding: 5px 14px; border-radius: 20px; background: var(--surface); border: 1px solid var(--border); color: var(--muted); text-decoration: none; transition: all 0.2s; }
+.bc-item:hover { border-color: var(--accent2); color: var(--accent2); }
+.bc-item.current { background: var(--accent); border-color: var(--accent); color: white; }
+.bc-sep { color: var(--border2); }
+.hero-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.hstat { background: var(--surface); padding: 1rem; text-align: center; }
+.hstat-val { font-family: var(--display); font-size: 1.4rem; font-weight: 700; color: var(--accent); display: block; }
+.hstat-label { font-family: var(--mono); font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* ─── SECTION ─── */
+.section { max-width: 900px; margin: 0 auto; padding: 5rem 2rem; }
+.section-divider { height: 1px; background: linear-gradient(90deg, transparent, var(--border), transparent); margin: 0; }
+.step-num { font-family: var(--mono); font-size: 0.68rem; color: var(--accent); letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 0.5rem; }
+h2 { font-family: var(--display); font-size: clamp(1.7rem, 3vw, 2.4rem); font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.75rem; line-height: 1.2; }
+h3 { font-family: var(--display); font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--text); }
+p { margin-bottom: 1rem; font-size: 1rem; }
+
+/* ─── BRIDGE BOX ─── */
+.bridge {
+  background: linear-gradient(135deg, #fdf8f0, #f8f0e8);
+  border: 1.5px solid #d4b896;
+  border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.75rem;
+  position: relative; overflow: hidden;
+}
+.bridge::before { content: '↩ YOU ALREADY KNOW THIS'; position: absolute; top: 0.65rem; right: 1rem; font-family: var(--mono); font-size: 0.6rem; color: var(--accent5); letter-spacing: 0.1em; }
+.bridge p { margin-bottom: 0; font-size: 0.92rem; color: #5a4a38; }
+.bridge strong { color: var(--accent); }
+
+/* ─── INSIGHT BOX ─── */
+.insight {
+  background: linear-gradient(135deg, #f0f7ff, #e8f2ff);
+  border: 1.5px solid #a0c0e0;
+  border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.75rem;
+  position: relative;
+}
+.insight::before { content: '✦ GEMMA 4 DIFFERENCE'; position: absolute; top: 0.65rem; right: 1rem; font-family: var(--mono); font-size: 0.6rem; color: var(--accent2); letter-spacing: 0.1em; }
+.insight p { margin-bottom: 0; font-size: 0.92rem; color: #1a3a5a; }
+.insight strong { color: var(--accent2); }
+
+/* ─── DEMO BOX ─── */
+.demo {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.75rem; margin: 1.5rem 0;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+}
+.demo h4 { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+.demo h4::before { content: '▶'; font-size: 0.6rem; }
+
+/* ─── CODE ─── */
+.code { background: #1e1c18; border-radius: 8px; padding: 1.25rem 1.5rem; font-family: var(--mono); font-size: 0.8rem; line-height: 1.8; color: #c8c0b0; overflow-x: auto; margin: 1rem 0; }
+.code .c { color: #5a7a5a; }
+.code .k { color: #e8904a; }
+.code .s { color: #8ac87a; }
+.code .n { color: #7ab8d8; }
+.code .v { color: #e8c87a; }
+
+/* ─── CANVAS ─── */
+canvas { display: block; width: 100%; }
+
+/* ─── INTERACTIVE ELEMENTS ─── */
+input[type=text], select {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 0.5rem 0.75rem; border-radius: 6px; font-family: var(--serif); font-size: 0.9rem;
+  outline: none; transition: border-color 0.2s;
+}
+input[type=text]:focus, select:focus { border-color: var(--accent2); }
+button {
+  padding: 0.55rem 1.4rem; border-radius: 6px; border: 1.5px solid var(--accent);
+  background: var(--accent); color: white; font-family: var(--mono); font-size: 0.78rem;
+  cursor: pointer; transition: all 0.2s; letter-spacing: 0.03em;
+}
+button:hover { background: #a04822; border-color: #a04822; }
+button.secondary { background: transparent; color: var(--accent2); border-color: var(--accent2); }
+button.secondary:hover { background: var(--accent2); color: white; }
+input[type=range] { accent-color: var(--accent); }
+
+/* ─── TOKEN CHIPS ─── */
+.token-row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; min-height: 36px; }
+.tok { display: inline-block; padding: 3px 9px; border-radius: 5px; font-family: var(--mono); font-size: 0.78rem; border: 1px solid; animation: tokPop 0.25s ease both; }
+@keyframes tokPop { from { opacity:0; transform:scale(0.7) translateY(4px); } to { opacity:1; transform:none; } }
+.tok.word { background: rgba(42,110,158,0.08); border-color: rgba(42,110,158,0.3); color: var(--accent2); }
+.tok.sub  { background: rgba(74,140,92,0.08); border-color: rgba(74,140,92,0.3); color: var(--accent3); }
+.tok.special { background: rgba(192,90,42,0.08); border-color: rgba(192,90,42,0.3); color: var(--accent); }
+
+/* ─── GRID UTILITIES ─── */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+@media(max-width:700px) { .two-col, .three-col { grid-template-columns: 1fr; } }
+
+/* ─── STAT CARDS ─── */
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; }
+.stat-card .label { font-family: var(--mono); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 0.25rem; }
+.stat-card .val { font-family: var(--display); font-size: 1.6rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
+.stat-card .note { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+
+/* ─── COMPARISON TABLE ─── */
+.compare-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.compare-table th { font-family: var(--mono); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); padding: 0.6rem 1rem; background: var(--bg2); text-align: left; border-bottom: 2px solid var(--border); }
+.compare-table td { padding: 0.7rem 1rem; border-bottom: 1px solid var(--bg2); vertical-align: top; }
+.compare-table tr:hover td { background: #faf8f4; }
+.compare-table td:first-child { font-family: var(--mono); font-size: 0.78rem; color: var(--accent2); font-weight: 600; }
+.compare-table td.highlight { color: var(--accent); font-weight: 600; }
+.compare-table td.muted { color: var(--muted); }
+
+/* ─── LAYER INSPECTOR ─── */
+.layer-grid { display: flex; gap: 3px; flex-wrap: wrap; }
+.layer-chip { width: 28px; height: 28px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 0.55rem; border: 1.5px solid transparent; transition: all 0.15s; }
+.layer-chip.sliding { background: rgba(42,110,158,0.12); color: var(--accent2); border-color: rgba(42,110,158,0.2); }
+.layer-chip.global  { background: rgba(138,74,158,0.12); color: var(--accent4); border-color: rgba(138,74,158,0.25); }
+.layer-chip:hover, .layer-chip.active { transform: scale(1.15); box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+.layer-chip.sliding.active { background: var(--accent2); color: white; border-color: var(--accent2); }
+.layer-chip.global.active  { background: var(--accent4); color: white; border-color: var(--accent4); }
+
+.layer-detail-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; margin-top: 1rem; min-height: 180px; }
+.ld-title { font-family: var(--display); font-size: 1rem; font-weight: 700; margin-bottom: 0.75rem; }
+.ld-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 1rem; }
+.ld-item { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; }
+.ld-item .k { font-family: var(--mono); font-size: 0.62rem; color: var(--muted); text-transform: uppercase; }
+.ld-item .v { font-family: var(--mono); font-size: 0.85rem; font-weight: 600; color: var(--accent2); }
+.ld-weights { display: flex; flex-direction: column; gap: 3px; }
+.ld-weight { display: flex; align-items: center; gap: 0.75rem; padding: 4px 8px; background: var(--surface); border-radius: 4px; font-family: var(--mono); font-size: 0.7rem; }
+.ld-weight .wname { color: var(--accent3); flex: 1; }
+.ld-weight .wshape { color: var(--muted); }
+
+/* ─── EMBEDDING SPACE VIZ ─── */
+#embed-canvas { border-radius: 10px; background: #1e1c18; border: 1px solid var(--border2); }
+
+/* ─── ATTENTION VIZ ─── */
+#attn-canvas { border-radius: 10px; background: #f0ede6; border: 1px solid var(--border); }
+#attn-matrix { border-radius: 10px; background: #f0ede6; border: 1px solid var(--border); }
+
+/* ─── FLOW CANVAS ─── */
+#flow-canvas { border-radius: 10px; background: #f0ede6; border: 1px solid var(--border); }
+
+/* ─── GENERATION ─── */
+.gen-output { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; min-height: 60px; font-family: var(--serif); font-size: 0.95rem; line-height: 1.7; }
+.gen-token-new { color: var(--accent); font-weight: 600; }
+.cursor-blink { display: inline-block; width: 2px; height: 1.1em; background: var(--accent); vertical-align: text-bottom; animation: blink 1s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+.logit-bars { display: flex; gap: 3px; height: 100px; align-items: flex-end; background: var(--bg2); border-radius: 8px; padding: 0.75rem; overflow: hidden; }
+.logit-col { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1; min-width: 0; }
+.logit-bar { width: 100%; border-radius: 2px 2px 0 0; min-height: 2px; transition: height 0.4s ease; }
+.logit-label { font-family: var(--mono); font-size: 0.52rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: center; }
+
+/* ─── KV VIZ ─── */
+.kv-grid { display: grid; gap: 2px; }
+.kv-cell { height: 14px; border-radius: 2px; transition: background 0.5s; }
+
+/* ─── ROPE VIZ ─── */
+#rope-canvas { border-radius: 10px; background: #1e1c18; border: 1px solid var(--border2); }
+
+/* ─── FOOTER ─── */
+footer { border-top: 1px solid var(--border); padding: 3rem 2rem; text-align: center; background: var(--bg2); }
+footer p { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); margin-bottom: 0.4rem; }
+footer a { color: var(--accent2); }
+
+/* ─── PROGRESS BAR ─── */
+.reading-progress { position: fixed; top: 0; left: 0; height: 2px; background: var(--accent); z-index: 200; transition: width 0.1s; width: 0%; }
+
+/* ─── BENCH BARS ─── */
+.bench-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }
+.bench-name { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); width: 200px; flex-shrink: 0; }
+.bench-bars { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.bench-bar-wrap { display: flex; align-items: center; gap: 0.5rem; }
+.bench-track { flex: 1; background: var(--bg2); border-radius: 3px; height: 10px; overflow: hidden; }
+.bench-fill { height: 100%; border-radius: 3px; }
+.bench-score { font-family: var(--mono); font-size: 0.72rem; width: 48px; text-align: right; }
+
+/* ─── TAG ─── */
+.tag { display: inline-block; font-family: var(--mono); font-size: 0.62rem; padding: 2px 8px; border-radius: 12px; border: 1px solid; margin: 1px; }
+.tag.blue { color: var(--accent2); border-color: rgba(42,110,158,0.3); background: rgba(42,110,158,0.06); }
+.tag.orange { color: var(--accent); border-color: rgba(192,90,42,0.3); background: rgba(192,90,42,0.06); }
+.tag.green { color: var(--accent3); border-color: rgba(74,140,92,0.3); background: rgba(74,140,92,0.06); }
+.tag.purple { color: var(--accent4); border-color: rgba(138,74,158,0.3); background: rgba(138,74,158,0.06); }
+</style>
+</head>
+<body>
+
+<div class="reading-progress" id="rp"></div>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-brand">Gemma 4 / Dissection</div>
+  <a href="#files">Files</a>
+  <a href="#embeddings">Embeddings</a>
+  <a href="#layers">Layers</a>
+  <a href="#attention">Attention</a>
+  <a href="#mlp">MLP</a>
+  <a href="#rope">RoPE</a>
+  <a href="#vision">Vision</a>
+  <a href="#kvcache">KV Cache</a>
+  <a href="#generation">Generation</a>
+  <div class="nav-series">
+    <a href="https://raj8github.github.io/zero2ai/" target="_blank">① zero2ai</a>
+    <a href="https://raj8github.github.io/how-gpt-works/" target="_blank">② microGPT</a>
+    <a href="#" class="current">③ Gemma 4</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-bg-text">G4</div>
+  <div class="hero-content">
+    <div class="hero-series">Inside Gemma 4 · 31B Parameters</div>
+    <h1>You understand GPT.<br>Now see what <em>actually changed.</em></h1>
+    <p class="hero-sub">You learned embeddings in zero2ai. You watched attention work in microGPT. This is Part 3 — every single concept that makes Gemma 4's 31B architecture different, explained from what you already know.</p>
+    <div class="breadcrumb">
+      <a class="bc-item" href="https://raj8github.github.io/zero2ai/" target="_blank">① Functions → Transformers</a>
+      <span class="bc-sep">→</span>
+      <a class="bc-item" href="https://raj8github.github.io/how-gpt-works/" target="_blank">② microGPT · line by line</a>
+      <span class="bc-sep">→</span>
+      <span class="bc-item current">③ Gemma 4 · real 31B model</span>
+    </div>
+    <div class="hero-stats">
+      <div class="hstat"><span class="hstat-val">30.7B</span><span class="hstat-label">Parameters</span></div>
+      <div class="hstat"><span class="hstat-val">60</span><span class="hstat-label">Layers</span></div>
+      <div class="hstat"><span class="hstat-val">256K</span><span class="hstat-label">Context</span></div>
+      <div class="hstat"><span class="hstat-val">262K</span><span class="hstat-label">Vocab</span></div>
+      <div class="hstat"><span class="hstat-val">5376</span><span class="hstat-label">Hidden Dim</span></div>
+      <div class="hstat"><span class="hstat-val">BF16</span><span class="hstat-label">Precision</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 0: THE REPO FILES — what's in the box -->
+<div class="section" id="files">
+  <div class="step-num">00 — What's in the Box</div>
+  <h2>The Repository: 11 Files, 62.6 GB</h2>
+
+  <div class="bridge">
+    <p>In microGPT, the entire model fit in ~200 lines of Python. The weights were tiny Python lists. <strong>A real model is the same thing</strong> — just weights in files. The architecture is still: embeddings → attention → MLP → output.</p>
+  </div>
+
+  <p>When you download <code style="font-family:var(--mono);font-size:0.85rem;color:var(--accent2)">google/gemma-4-31B-it</code>, you get exactly 11 files. Here's what each one actually does:</p>
+
+  <div class="demo">
+    <h4>Repository File Map — click any file</h4>
+    <div id="file-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+    <div id="file-detail" style="margin-top:1rem;padding:1rem;background:var(--bg2);border-radius:8px;font-size:0.88rem;color:var(--muted);min-height:60px;">Click a file above to learn what it does.</div>
+  </div>
+
+  <div class="insight">
+    <p>The two <strong>.safetensors</strong> files (49.8 GB + 12.8 GB) are just the weights. "Safetensors" is a security improvement over older pickle-based formats — it prevents malicious code execution when loading weights. Every number in them is a <strong>bfloat16</strong>: 2 bytes, same range as float32 but lower precision.</p>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 1: TOKENISER -->
+<div class="section" id="tokeniser">
+  <div class="step-num">01 — Tokenisation</div>
+  <h2>262,144 Tokens: Why So Many?</h2>
+
+  <div class="bridge">
+    <p>In microGPT, Karpathy used <strong>27 tokens</strong> — one per letter, plus a start/end token. It worked for names. But to speak 140 languages, you need more vocabulary. Gemma 4 uses <strong>Byte-Pair Encoding (BPE)</strong> — the same algorithm, scaled up.</p>
+  </div>
+
+  <p>BPE starts with individual characters, then merges the most common adjacent pairs over and over until it reaches the target vocab size. Common English words become a single token. Rare words break into pieces. Non-English scripts get their own piece sets.</p>
+
+  <div class="demo">
+    <h4>Interactive Tokeniser — type anything</h4>
+    <div style="display:flex;gap:0.75rem;margin-bottom:1rem;flex-wrap:wrap;">
+      <input type="text" id="tok-input" value="Gemma 4 uses safetensors in bfloat16 format" style="flex:1;min-width:200px;">
+      <button onclick="runTokenise()">Tokenise →</button>
+    </div>
+    <div class="token-row" id="tok-output"></div>
+    <div id="tok-meta" style="font-family:var(--mono);font-size:0.72rem;color:var(--muted);margin-top:0.75rem;"></div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <h3>Special Token IDs</h3>
+      <p style="font-size:0.88rem;color:var(--muted);margin-bottom:0.75rem;">Beyond the 262,144 text tokens, Gemma 4 has special tokens for multimodal content. They sit in the extended vocabulary above 255K:</p>
+      <table class="compare-table">
+        <tr><th>Token</th><th>ID</th><th>Meaning</th></tr>
+        <tr><td>&lt;bos&gt;</td><td>2</td><td>Beginning of sequence</td></tr>
+        <tr><td>&lt;eos&gt;</td><td>1, 106</td><td>End of sequence (two variants)</td></tr>
+        <tr><td>&lt;pad&gt;</td><td>0</td><td>Padding (batch alignment)</td></tr>
+        <tr><td>&lt;image&gt;</td><td>258,880</td><td>Image placeholder token</td></tr>
+        <tr><td>&lt;boi&gt; / &lt;eoi&gt;</td><td>255,999 / 258,882</td><td>Begin/end image block</td></tr>
+        <tr><td>&lt;audio&gt;</td><td>258,881</td><td>Audio placeholder</td></tr>
+        <tr><td>&lt;video&gt;</td><td>258,884</td><td>Video placeholder</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>What the Chat Template Does</h3>
+      <p style="font-size:0.88rem;color:var(--muted);margin-bottom:0.75rem;">The 12KB <code>chat_template.jinja</code> wraps your message in the format the model was trained on. This is what actually gets tokenised:</p>
+      <div class="code">
+<span class="c"># Thinking mode ON:</span>
+<span class="n">&lt;|think|&gt;</span>  <span class="c"># in system prompt</span>
+
+<span class="c"># Model outputs:</span>
+<span class="n">&lt;|channel&gt;</span>thought<span class="n">\n</span>
+[model reasons here...]
+<span class="n">&lt;channel|&gt;</span>
+[final answer here]
+
+<span class="c"># Without thinking:</span>
+<span class="c"># Same tags, empty block</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 2: EMBEDDINGS (THE VECTOR DB QUESTION) -->
+<div class="section" id="embeddings">
+  <div class="step-num">02 — Embeddings & the "Vector DB" Inside</div>
+  <h2>The Embedding Table IS the Vector Database</h2>
+
+  <div class="bridge">
+    <p>In zero2ai, you learned that each token gets <strong>"a rich profile card"</strong> — a vector of numbers representing its meaning. In microGPT, that was <code>wte[27×16]</code> — 27 tokens, each with 16 numbers. <strong>Gemma 4 is the exact same thing</strong>, just 262,144 tokens × 5,376 numbers each.</p>
+  </div>
+
+  <div class="insight">
+    <p>When you ask "is there a vector database?" — <strong>the embedding table IS it.</strong> The 262K × 5376 matrix (that's ~1.4 billion numbers, ~2.8 GB) is where all token "meanings" live, pre-learned during training. Each row is a 5,376-dimensional vector for one token. Similar meanings end up geometrically close. You don't need a separate vector DB — it's baked into the model weights.</p>
+  </div>
+
+  <div class="demo">
+    <h4>The Embedding Lookup — what actually happens</h4>
+    <canvas id="embed-canvas" height="220"></canvas>
+    <div style="display:flex;gap:0.75rem;margin-top:0.75rem;flex-wrap:wrap;align-items:center;">
+      <button onclick="animateEmbed()">Show lookup animation →</button>
+      <span style="font-family:var(--mono);font-size:0.72rem;color:var(--muted);">Token ID → row index → 5376-dim vector</span>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <h3>embed_tokens: The Main Table</h3>
+      <div class="code">
+<span class="c"># Shape: [262144, 5376]</span>
+<span class="c"># Size: 262144 × 5376 × 2 bytes = 2.8 GB</span>
+<span class="c"># BF16 precision</span>
+
+token_id = <span class="v">4821</span>     <span class="c"># e.g. "▁model"</span>
+embedding = embed_tokens[<span class="v">4821</span>]
+<span class="c"># → float vector of shape [5376]</span>
+<span class="c"># → this IS the token's meaning</span>
+
+<span class="c"># Tied to output: lm_head uses the</span>
+<span class="c"># SAME matrix transposed for output</span>
+<span class="c"># → saves 2.8 GB of storage</span>
+      </div>
+    </div>
+    <div>
+      <h3>Why 5376 Dimensions?</h3>
+      <p style="font-size:0.88rem;color:var(--muted);margin-bottom:0.75rem;">MicroGPT used 16 dimensions. GPT-2 small uses 768. GPT-3 uses 12,288. More dimensions = more "directions" to encode meaning:</p>
+      <table class="compare-table">
+        <tr><th>Model</th><th>Hidden Dim</th><th>Params</th></tr>
+        <tr><td>microGPT</td><td class="muted">16</td><td class="muted">~4K</td></tr>
+        <tr><td>GPT-2 small</td><td class="muted">768</td><td class="muted">117M</td></tr>
+        <tr><td>GPT-3</td><td class="muted">12,288</td><td class="muted">175B</td></tr>
+        <tr><td>Gemma 4 31B</td><td class="highlight">5,376</td><td class="highlight">30.7B</td></tr>
+      </table>
+      <p style="font-size:0.82rem;color:var(--muted);margin-top:0.5rem;">5376 isn't round — it's 3 × 2048 × 7/8. Chosen for divisibility by attention heads while minimising GPU memory fragmentation.</p>
+    </div>
+  </div>
+
+  <h3 style="margin-top:1.5rem;">Weight Tying: One Table Does Two Jobs</h3>
+  <p style="color:var(--muted);">Gemma 4 sets <code style="font-family:var(--mono);font-size:0.82rem">tie_word_embeddings: true</code>. This means the same 262K × 5376 matrix is used <em>both</em> at input (to convert token IDs to vectors) and at output (to convert the model's final hidden state back to a prediction over 262K tokens). It saves ~2.8 GB and also improves quality — the model learns a single consistent geometry of meaning.</p>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 3: LAYERS -->
+<div class="section" id="layers">
+  <div class="step-num">03 — 60 Decoder Layers</div>
+  <h2>Why 60 Layers? And What's the Pattern?</h2>
+
+  <div class="bridge">
+    <p>MicroGPT used <strong>2 transformer blocks</strong>. Each block: attention → MLP, with layer norm before each. Gemma 4 is the same structure, 60 times. The key difference: <strong>not all 60 layers are identical</strong>. They alternate between two types of attention.</p>
+  </div>
+
+  <p>The pattern from <code style="font-family:var(--mono);font-size:0.82rem">config.json</code> is exact: 5 sliding-window layers, then 1 full-attention layer, repeated 10 times. Every 6th layer (indices 5, 11, 17, 23...) gets to see the whole sequence. The last layer (#59) is always full-attention.</p>
+
+  <div class="demo">
+    <h4>All 60 Layers — click any to inspect</h4>
+    <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;align-items:center;font-family:var(--mono);font-size:0.7rem;color:var(--muted);">
+      <span style="color:var(--accent2);">■</span> Sliding window &nbsp;&nbsp;
+      <span style="color:var(--accent4);">■</span> Full global attention (every 6th)
+    </div>
+    <div class="layer-grid" id="layer-grid"></div>
+    <div class="layer-detail-box" id="layer-detail-box">
+      <div style="color:var(--muted);font-size:0.88rem;">Select a layer to inspect all its weight matrices.</div>
+    </div>
+  </div>
+
+  <div class="insight">
+    <p>Why this 5:1 ratio? <strong>Full attention is O(n²)</strong> in sequence length — at 256K tokens, that's 65 billion attention operations per layer. Having 50 sliding-window layers (which are O(n × window) = much cheaper) and only 10 full layers means the model can handle 256K context without running out of memory on a single GPU.</p>
+  </div>
+
+  <h3>What's Inside Every Layer?</h3>
+  <p style="color:var(--muted);">Each of the 60 layers contains exactly 14 named weight tensors stored in the safetensors files. Here's the full anatomy:</p>
+  <div class="code">
+<span class="c"># One layer's weights (sliding type shown)</span>
+layers.<span class="v">N</span>.input_layernorm.weight       <span class="c"># [5376] — normalize before attention</span>
+layers.<span class="v">N</span>.self_attn.q_proj.weight     <span class="c"># [8192, 5376] — query: what am I looking for?</span>
+layers.<span class="v">N</span>.self_attn.k_proj.weight     <span class="c"># [4096, 5376] — key: what do I contain?</span>
+layers.<span class="v">N</span>.self_attn.v_proj.weight     <span class="c"># [4096, 5376] — value: what to extract?</span>
+layers.<span class="v">N</span>.self_attn.q_norm.weight     <span class="c"># [256] — RMSNorm on queries (new in Gemma4)</span>
+layers.<span class="v">N</span>.self_attn.k_norm.weight     <span class="c"># [256] — RMSNorm on keys (new in Gemma4)</span>
+layers.<span class="v">N</span>.self_attn.o_proj.weight     <span class="c"># [5376, 8192] — combine all heads</span>
+layers.<span class="v">N</span>.post_attention_layernorm.weight  <span class="c"># [5376]</span>
+layers.<span class="v">N</span>.pre_feedforward_layernorm.weight  <span class="c"># [5376]</span>
+layers.<span class="v">N</span>.mlp.gate_proj.weight         <span class="c"># [21504, 5376] — MLP gate</span>
+layers.<span class="v">N</span>.mlp.up_proj.weight           <span class="c"># [21504, 5376] — MLP up</span>
+layers.<span class="v">N</span>.mlp.down_proj.weight         <span class="c"># [5376, 21504] — MLP down</span>
+layers.<span class="v">N</span>.post_feedforward_layernorm.weight <span class="c"># [5376]</span>
+layers.<span class="v">N</span>.layer_scalar                  <span class="c"># [1] — NEW: per-layer volume control</span>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 4: ATTENTION -->
+<div class="section" id="attention">
+  <div class="step-num">04 — Attention: Two Kinds</div>
+  <h2>Sliding Window vs Full Attention (and Why Both)</h2>
+
+  <div class="bridge">
+    <p>In zero2ai, you saw attention as <strong>"every word looking at every other word"</strong>. In microGPT, you saw the actual Q·K·V math. Gemma 4 uses the same Q·K·V mechanism — but <strong>limits how far back tokens can look</strong> in 50 out of 60 layers.</p>
+  </div>
+
+  <div class="demo">
+    <h4>Attention Pattern Visualiser — toggle between modes</h4>
+    <div style="display:flex;gap:0.75rem;margin-bottom:1rem;flex-wrap:wrap;">
+      <button onclick="setAttn('sliding')" id="btn-sliding">Sliding Window (w=1024)</button>
+      <button onclick="setAttn('full')" id="btn-full" class="secondary">Full Global Attention</button>
+    </div>
+    <div class="two-col">
+      <div>
+        <canvas id="attn-matrix" height="260"></canvas>
+        <div style="font-family:var(--mono);font-size:0.68rem;color:var(--muted);text-align:center;margin-top:0.5rem;" id="attn-label">Each token attends only within its 1024-token window</div>
+      </div>
+      <div>
+        <canvas id="attn-detail" height="260"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <h3>The Q·K·V Arithmetic — with Gemma 4's actual numbers</h3>
+  <div class="two-col">
+    <div>
+      <p style="color:var(--muted);font-size:0.88rem;"><strong>In microGPT</strong>, Karpathy used 4 attention heads, head_dim=4. Each head independently asks a question about context. <strong>In Gemma 4</strong>, sliding layers have 32 query heads but only 16 KV heads — this is <em>Grouped Query Attention (GQA)</em>.</p>
+      <div class="code">
+<span class="c"># Sliding layer attention math:</span>
+Q = x @ q_proj.T  <span class="c"># [seq, 8192] = 32×256</span>
+K = x @ k_proj.T  <span class="c"># [seq, 4096] = 16×256</span>
+V = x @ v_proj.T  <span class="c"># [seq, 4096] = 16×256</span>
+
+<span class="c"># GQA: 2 Q heads share each K,V head</span>
+<span class="c"># Attention scores:</span>
+scores = Q @ K.T / sqrt(<span class="v">256</span>)
+<span class="c"># Apply q_norm and k_norm first</span>
+<span class="c"># Then mask: only last 1024 positions</span>
+attn = softmax(scores)   <span class="c"># [seq, seq]</span>
+out = attn @ V           <span class="c"># [seq, 4096]</span>
+out = out @ o_proj.T     <span class="c"># [seq, 5376]</span>
+      </div>
+    </div>
+    <div>
+      <h3>New in Gemma 4: Q-Norm and K-Norm</h3>
+      <p style="color:var(--muted);font-size:0.88rem;margin-bottom:0.75rem;">MicroGPT didn't have this. When context is 256K tokens long, the Q·K dot products can become enormous — causing attention to collapse onto a few tokens or spread completely flat. Gemma 4 adds a learned RMSNorm to both Q and K vectors before computing scores:</p>
+      <div class="code">
+<span class="c"># After projecting Q and K:</span>
+Q = rms_norm(Q, q_norm_weight)
+K = rms_norm(K, k_norm_weight)
+<span class="c"># q_norm_weight shape: [256]</span>
+<span class="c"># One per head dimension</span>
+<span class="c"># This keeps attention stable</span>
+<span class="c"># at 256K token distances</span>
+      </div>
+      <div class="insight" style="margin-top:0.75rem;">
+        <p><strong>layer_scalar</strong> is another Gemma 4 addition: a single learned number [1] multiplied with each layer's output before the residual add. It's a per-layer "volume dial" — the model learns whether each layer should contribute a lot or a little to the final representation.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:1.5rem;">Global Layers: K = V (Unified Keys and Values)</h3>
+  <div class="bridge">
+    <p>In standard attention, K and V are always separate projections. Global layers in Gemma 4 do something unusual: <strong>Keys are set equal to Values</strong>. This halves the KV cache for global layers — instead of storing 2 separate tensors per layer, you store 1.</p>
+  </div>
+  <table class="compare-table">
+    <tr><th>Property</th><th>Sliding (50 layers)</th><th>Global (10 layers)</th></tr>
+    <tr><td>Query heads</td><td>32</td><td>32</td></tr>
+    <tr><td>KV heads</td><td>16</td><td>4 (K=V)</td></tr>
+    <tr><td>Head dim</td><td>256</td><td>512</td></tr>
+    <tr><td>Context window</td><td>1024 tokens</td><td>Full 256K</td></tr>
+    <tr><td>RoPE theta</td><td>10,000</td><td>1,000,000</td></tr>
+    <tr><td>RoPE type</td><td>Standard</td><td>Proportional (p-RoPE)</td></tr>
+    <tr><td>K=V unified?</td><td>No</td><td>Yes</td></tr>
+  </table>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 5: MLP -->
+<div class="section" id="mlp">
+  <div class="step-num">05 — Feed-Forward Network (MLP)</div>
+  <h2>The MLP: Where Knowledge Actually Lives</h2>
+
+  <div class="bridge">
+    <p>In microGPT, after attention there was a simple <strong>two-layer MLP with ReLU</strong>. You saw how this is what lets the network model non-linear patterns. Gemma 4 uses a <em>gated</em> MLP — three weight matrices instead of two, with a learned gate that controls which features pass through.</p>
+  </div>
+
+  <div class="demo">
+    <h4>GeGLU: How Gemma 4's MLP Works</h4>
+    <canvas id="mlp-canvas" height="170"></canvas>
+    <div style="display:flex;gap:0.75rem;margin-top:0.75rem;justify-content:center;">
+      <button onclick="animateMLP()">Animate data flow →</button>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <div class="code">
+<span class="c"># Three weight matrices per layer:</span>
+gate = <span class="k">gelu</span>(x @ gate_proj.T) <span class="c"># gate signal</span>
+up   = x @ up_proj.T          <span class="c"># content</span>
+out  = (gate * up) @ down_proj.T
+
+<span class="c"># gate_proj: [21504, 5376]</span>
+<span class="c"># up_proj:   [21504, 5376]</span>
+<span class="c"># down_proj: [5376, 21504]</span>
+<span class="c"># Each: ~115M params → 346M/layer</span>
+<span class="c"># × 60 layers = ~20.8B params total</span>
+      </div>
+    </div>
+    <div>
+      <h3>Why Gated MLP?</h3>
+      <p style="color:var(--muted);font-size:0.88rem;margin-bottom:0.75rem;">The <em>gate</em> acts as a learned filter. <code>gate_proj</code> learns <em>"which concepts are relevant right now?"</em> and produces near-zero values for irrelevant features. Those get multiplied with <code>up_proj</code>'s output — suppressing irrelevant content. This is why transformers with gated MLPs have better recall of stored facts.</p>
+      <h3>21,504 = 4 × 5,376</h3>
+      <p style="color:var(--muted);font-size:0.88rem;">The intermediate size is exactly 4× the hidden size. This "expansion factor" gives the MLP enough room to represent complex transformations. Each of the 21,504 intermediate neurons can detect one specific pattern. With 346M MLP params per layer and 60 layers, the MLP alone accounts for <strong>~20.8B of the 30.7B total</strong>. That's where factual knowledge is thought to be stored.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 6: ROPE -->
+<div class="section" id="rope">
+  <div class="step-num">06 — Positional Encoding</div>
+  <h2>RoPE: Teaching the Model Where Words Are</h2>
+
+  <div class="bridge">
+    <p>In zero2ai, you learned about <strong>position encoding</strong> — adding a number to each token embedding to tell the model "this token is in position 4." In microGPT, Karpathy used a simple learned position table (<code>wpe[16×16]</code>). Gemma 4 uses <strong>Rotary Position Embeddings (RoPE)</strong> — a smarter approach that doesn't add to embeddings but instead <em>rotates</em> the Q and K vectors.</p>
+  </div>
+
+  <div class="demo">
+    <h4>RoPE: Position Encoded as Rotation</h4>
+    <canvas id="rope-canvas" height="240"></canvas>
+    <div style="display:flex;gap:0.75rem;margin-top:0.75rem;flex-wrap:wrap;align-items:center;">
+      <button onclick="animateRoPE()">Animate rotations →</button>
+      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--muted);">Each pair of dims rotates at a different speed</span>
+    </div>
+  </div>
+
+  <p>Here's the key intuition: each 256-dim head vector is split into 128 pairs. Each pair is rotated by an angle that depends on the token's position. Early pairs rotate fast (good at detecting close neighbours). Late pairs rotate slowly (good at detecting long-range relationships). When you compute Q·K, the dot product naturally encodes the <em>distance</em> between the two tokens.</p>
+
+  <div class="insight">
+    <p><strong>Gemma 4 uses two different RoPE configurations:</strong> Sliding layers use standard RoPE with θ=10,000 — calibrated for windows up to ~8K tokens. Global layers use <strong>Proportional RoPE (p-RoPE)</strong> with θ=1,000,000 and <code>partial_rotary_factor=0.25</code> — meaning only 25% of the head's dimensions get rotated. At 256K token distances, standard RoPE would "wrap around" and lose positional information. p-RoPE prevents this by spreading rotations much more sparsely across the extreme range.</p>
+  </div>
+
+  <div class="code">
+<span class="c"># Sliding layers:</span>
+rope_theta = <span class="v">10_000.0</span>    <span class="c"># standard</span>
+rope_type = <span class="s">"default"</span>     <span class="c"># all 256 dims rotated</span>
+
+<span class="c"># Global layers (p-RoPE):</span>
+rope_theta = <span class="v">1_000_000.0</span>  <span class="c"># 100× larger → slower rotation</span>
+rope_type = <span class="s">"proportional"</span>
+partial_rotary_factor = <span class="v">0.25</span> <span class="c"># only 64/256 dims rotated</span>
+<span class="c"># → stable position signal up to 256K tokens</span>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 7: VISION ENCODER -->
+<div class="section" id="vision">
+  <div class="step-num">07 — Vision Encoder</div>
+  <h2>Processing Images: A Transformer Inside a Transformer</h2>
+
+  <div class="bridge">
+    <p>Everything you've learned applies to text. For images, Gemma 4 runs a <strong>separate, smaller transformer</strong> (27 layers, 1152 dims) to convert pixels into vectors — then those vectors get projected to match the text decoder's 5376 dims and <em>concatenated into the token stream</em>. The decoder never "knows" it's looking at image tokens vs text tokens.</p>
+  </div>
+
+  <div class="demo">
+    <h4>Image → Patches → Tokens → Decoder</h4>
+    <canvas id="vision-canvas" height="220"></canvas>
+    <div style="display:flex;gap:0.75rem;margin-top:0.75rem;flex-wrap:wrap;align-items:center;">
+      <label style="font-family:var(--mono);font-size:0.72rem;color:var(--muted);">Token budget:</label>
+      <select id="patch-budget" onchange="drawVision()">
+        <option value="70">70 tokens (fast, overview)</option>
+        <option value="140">140 tokens</option>
+        <option value="280" selected>280 tokens (default)</option>
+        <option value="560">560 tokens (detailed)</option>
+        <option value="1120">1120 tokens (fine OCR)</option>
+      </select>
+      <button onclick="drawVision()">Redraw</button>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <h3>Vision Encoder Specs</h3>
+      <table class="compare-table">
+        <tr><th>Property</th><th>Value</th></tr>
+        <tr><td>Layers</td><td>27</td></tr>
+        <tr><td>Hidden dim</td><td>1,152</td></tr>
+        <tr><td>Attention heads</td><td>16</td></tr>
+        <tr><td>Head dim</td><td>72</td></tr>
+        <tr><td>Patch size</td><td>16×16 pixels</td></tr>
+        <tr><td>Attention type</td><td>Bidirectional (not causal)</td></tr>
+        <tr><td>Position encoding</td><td>2D RoPE</td></tr>
+        <tr><td>Bridge to text</td><td>embed_vision: [5376, 1152]</td></tr>
+        <tr><td>Default tokens/image</td><td>280</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>Why Bidirectional Attention?</h3>
+      <p style="color:var(--muted);font-size:0.88rem;margin-bottom:0.75rem;">Text is <em>causal</em> — each token can only look at past tokens. Images have no order. Patch 47 should be able to attend to patch 12 <em>and</em> patch 89. So the vision encoder uses full bidirectional attention — every patch sees every other patch in both directions.</p>
+      <h3>2D RoPE for Patches</h3>
+      <p style="color:var(--muted);font-size:0.88rem;margin-bottom:0.75rem;">In text, position is 1D (token 1, token 2...). For image patches, position is 2D (row 2, col 4). Standard RoPE would treat patch (2,4) and patch (3,3) as nearby in sequence, even though they're in different rows. <strong>2D RoPE</strong> encodes both x and y independently — a patch in column 4 always gets the same x-rotation regardless of which row it's in.</p>
+      <p style="color:var(--muted);font-size:0.88rem;">This is how Gemma 4 handles <em>variable aspect ratios</em> — a 16:9 landscape image and a 9:16 portrait image both get correct 2D positions without distortion.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 8: KV CACHE -->
+<div class="section" id="kvcache">
+  <div class="step-num">08 — The KV Cache</div>
+  <h2>How Generation Stays Fast: Caching Computed Keys and Values</h2>
+
+  <div class="bridge">
+    <p>In microGPT, every time you generate a new token, the whole forward pass reruns from scratch. At 200 lines with 27 vocab tokens this is fine. At 256K context with 30.7B parameters, you <strong>cannot</strong> recompute everything for every new token. The KV Cache saves the Key and Value vectors from every previous token so only the new token needs to be processed.</p>
+  </div>
+
+  <div class="demo">
+    <h4>KV Cache Growing During Generation</h4>
+    <canvas id="kv-canvas" height="200"></canvas>
+    <div style="display:flex;gap:0.75rem;margin-top:0.75rem;flex-wrap:wrap;align-items:center;">
+      <button onclick="animateKV()">Watch cache grow →</button>
+      <span style="font-family:var(--mono);font-size:0.72rem;color:var(--muted);" id="kv-status">Generating tokens...</span>
+    </div>
+  </div>
+
+  <div class="insight">
+    <p>At 256K context length with a naïve approach (32 heads, 256 dim, 60 layers, 2 tensors), the KV cache would be <strong>256K × 32 × 256 × 2 × 60 × 2 bytes = 503 GB</strong>. Gemma 4 uses three tricks to bring this down dramatically:</p>
+  </div>
+
+  <div class="three-col">
+    <div class="stat-card">
+      <div class="label">Trick 1: GQA</div>
+      <div class="val">÷2</div>
+      <div class="note">Grouped Query Attention: 16 KV heads instead of 32 for sliding layers. 2 query heads share each KV head. Halves the sliding KV cache.</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Trick 2: K=V</div>
+      <div class="val">÷2</div>
+      <div class="note">In global layers, Keys are set equal to Values. Only 4 KV heads, with a single K/V tensor. Near-zero quality loss.</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Trick 3: Window Bound</div>
+      <div class="val">÷250</div>
+      <div class="note">Sliding layers only need to cache the last 1,024 tokens, not all 256K. 50 layers × bounded window = O(1024) not O(256K).</div>
+    </div>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 9: LAYERNORM -->
+<div class="section" id="layernorm">
+  <div class="step-num">09 — Normalisation</div>
+  <h2>RMSNorm: Four Per Layer, and Why</h2>
+
+  <div class="bridge">
+    <p>In microGPT, Karpathy used LayerNorm — the standard normalisation that subtracts the mean and divides by the standard deviation. Gemma 4 uses <strong>RMSNorm</strong> (Root Mean Square Norm) which skips subtracting the mean. It's faster and works just as well for large models.</p>
+  </div>
+
+  <p>Each layer has <strong>four</strong> normalisation steps, each with its own learned weight vector of shape [5376]:</p>
+
+  <div class="code">
+<span class="c"># RMSNorm formula:</span>
+<span class="k">def</span> rms_norm(x, weight, eps=<span class="v">1e-6</span>):
+    rms = sqrt(mean(x**<span class="v">2</span>) + eps)
+    <span class="k">return</span> (x / rms) * weight
+<span class="c"># weight shape: [5376] — one scale per dimension</span>
+<span class="c"># eps=1e-6 prevents division by zero</span>
+
+<span class="c"># 4 normalisation steps per layer:</span>
+<span class="n">input_layernorm</span>        <span class="c"># before attention</span>
+<span class="n">post_attention_layernorm</span>  <span class="c"># after attention, before residual add</span>
+<span class="n">pre_feedforward_layernorm</span>  <span class="c"># before MLP</span>
+<span class="n">post_feedforward_layernorm</span> <span class="c"># after MLP, before residual add</span>
+  </div>
+  <p style="color:var(--muted);">Normalisation keeps the numbers in a reasonable range as they flow through 60 layers. Without it, values would explode or vanish — gradient descent couldn't work.</p>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 10: GENERATION -->
+<div class="section" id="generation">
+  <div class="step-num">10 — Generating Output</div>
+  <h2>From Hidden State to Next Token</h2>
+
+  <div class="bridge">
+    <p>In microGPT, after the transformer blocks you saw a simple matrix multiply: <code>logits = x @ wte.T</code>, then <code>random.choices</code> to sample. Gemma 4 does the same thing — with two additions: <strong>logit softcapping</strong> and the <strong>thinking mode</strong> output format.</p>
+  </div>
+
+  <div class="demo">
+    <h4>Token Generation Simulator</h4>
+    <div class="gen-output" id="gen-output">The model processes tokens through 60 decoder layers<span class="cursor-blink"></span></div>
+    <div style="margin:1rem 0;">
+      <div style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);margin-bottom:0.4rem;">Next token logits (after softcap + softmax):</div>
+      <div class="logit-bars" id="logit-bars"></div>
+    </div>
+    <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
+      <button onclick="genStep()">Next token →</button>
+      <button onclick="genAuto()" class="secondary">Auto generate</button>
+      <button onclick="genReset()" class="secondary">Reset</button>
+      <span style="font-family:var(--mono);font-size:0.72rem;color:var(--muted);">temp=1.0 · top_p=0.95 · top_k=64</span>
+    </div>
+  </div>
+
+  <h3>final_logit_softcapping = 30.0</h3>
+  <p style="color:var(--muted);">Before softmax, Gemma 4 applies: <code style="font-family:var(--mono);font-size:0.82rem">logits = tanh(logits / 30.0) × 30.0</code>. This squashes all logit values into the range (−30, +30). Without it, a highly confident model might produce one logit of +500 — softmax would then assign probability ≈ 1.0 to that token, making generation completely deterministic. Softcapping prevents this collapse.</p>
+
+  <div class="insight">
+    <p><strong>Temperature, top_p, top_k</strong> — these three hyperparameters are set in generation_config.json. Temperature scales the logits before softmax (lower = sharper = more confident, higher = flatter = more random). Top_k keeps only the 64 most likely tokens. Top_p then keeps the smallest set whose cumulative probability exceeds 0.95. Tokens outside that set get probability 0.</p>
+  </div>
+
+  <h3 style="margin-top:1.5rem;">Thinking Mode: a Channel Inside the Output</h3>
+  <div class="code">
+<span class="c"># System prompt with thinking enabled:</span>
+system = <span class="s">"You are a helpful assistant. &lt;|think|&gt;"</span>
+
+<span class="c"># Model output structure:</span>
+<span class="n">&lt;|channel&gt;</span>thought<span class="n">\n</span>
+Let me reason through this step by step...
+[extended reasoning, not shown to user]
+<span class="n">&lt;channel|&gt;</span>
+The answer is 42.   <span class="c"># ← user sees this</span>
+
+<span class="c"># parse_response() separates these two parts</span>
+<span class="c"># Even without thinking, the model emits</span>
+<span class="c"># empty channel tags for format consistency</span>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 11: THE FULL FORWARD PASS -->
+<div class="section" id="forward">
+  <div class="step-num">11 — Putting It All Together</div>
+  <h2>One Forward Pass, Start to Finish</h2>
+
+  <p style="color:var(--muted);">Here's every step that happens when Gemma 4 processes one token — from raw text to predicted next token. This is the complete picture connecting everything above:</p>
+
+  <div class="demo">
+    <h4>Complete Forward Pass — animated step by step</h4>
+    <canvas id="flow-canvas" height="360"></canvas>
+    <div style="display:flex;gap:0.75rem;margin-top:0.75rem;">
+      <button onclick="animateFlow()">▶ Animate forward pass</button>
+      <button onclick="resetFlow()" class="secondary">Reset</button>
+    </div>
+  </div>
+
+  <div style="margin-top:1.5rem;">
+    <ol style="padding-left:1.5rem;display:flex;flex-direction:column;gap:0.75rem;">
+      <li><strong>Tokenise</strong> — raw text split into BPE tokens, mapped to integer IDs</li>
+      <li><strong>Embed</strong> — each ID looked up in the 262K × 5376 embedding table → a vector per token</li>
+      <li><strong>Vision merge</strong> (if images) — ViT encoder processes patches, embed_vision projects them to 5376 dims, concatenated into token stream</li>
+      <li><strong>60× Decoder layer</strong> — for each layer: <em>RMSNorm → attention (sliding or global) → residual → RMSNorm → MLP (GeGLU) → residual × layer_scalar</em></li>
+      <li><strong>Final RMSNorm</strong> — one last normalisation on the final hidden state</li>
+      <li><strong>LM Head</strong> — multiply by embedding table transposed → 262K raw logits</li>
+      <li><strong>Softcap</strong> — tanh(logits/30) × 30</li>
+      <li><strong>Sample</strong> — apply temperature, top_k=64, top_p=0.95, pick a token</li>
+      <li><strong>Repeat</strong> — new token appended, process repeats (KV cache means only new token needs full compute)</li>
+    </ol>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SECTION 12: BENCHMARKS -->
+<div class="section" id="benchmarks">
+  <div class="step-num">12 — Results</div>
+  <h2>What All This Architecture Achieves</h2>
+
+  <p style="color:var(--muted);">Every architectural choice above — hybrid attention, GQA, K=V unification, p-RoPE, q/k-norm, layer_scalar, GeGLU — compounds into benchmark improvements that are, frankly, shocking compared to Gemma 3.</p>
+
+  <div id="bench-container"></div>
+
+  <div class="insight" style="margin-top:2rem;">
+    <p><strong>Why such a large jump from Gemma 3?</strong> The 256K context window (vs 128K) enabled reasoning over longer chains. The hybrid attention architecture made that context efficient. The thinking mode added explicit chain-of-thought reasoning. And the training mix included harder math and coding problems. All those compounded — AIME 2026 went from 20.8% to 89.2%, nearly 4× improvement on math olympiad problems.</p>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- SERIES RECAP -->
+<div class="section">
+  <div class="step-num">Series Complete</div>
+  <h2>The Full Picture: From Slope to Gemma 4</h2>
+
+  <div class="bridge">
+    <p>You started with <strong>f(x) = x²</strong> and a gradient descent ball rolling downhill. You saw backprop trace blame through Karpathy's 200-line model. And now you've seen every concept scaled to 30.7B parameters across 60 layers processing 256K tokens. It's the same math, the same architecture — just with extraordinary engineering to make it fast, stable, and capable at scale.</p>
+  </div>
+
+  <table class="compare-table">
+    <tr><th>Concept</th><th>zero2ai</th><th>microGPT</th><th>Gemma 4 31B</th></tr>
+    <tr><td>Vocabulary</td><td class="muted">26 letters</td><td class="muted">27 chars</td><td class="highlight">262,144 BPE subwords</td></tr>
+    <tr><td>Embedding dim</td><td class="muted">conceptual</td><td class="muted">16</td><td class="highlight">5,376</td></tr>
+    <tr><td>Attention heads</td><td class="muted">conceptual</td><td class="muted">4</td><td class="highlight">32Q / 16KV / 4KV-global</td></tr>
+    <tr><td>Context window</td><td class="muted">—</td><td class="muted">whole name</td><td class="highlight">256,000 tokens</td></tr>
+    <tr><td>Transformer blocks</td><td class="muted">conceptual</td><td class="muted">2</td><td class="highlight">60 (hybrid)</td></tr>
+    <tr><td>MLP</td><td class="muted">2-layer ReLU</td><td class="muted">2-layer ReLU</td><td class="highlight">GeGLU 3-weight gated</td></tr>
+    <tr><td>Position encoding</td><td class="muted">+position vector</td><td class="muted">learned wpe table</td><td class="highlight">Dual RoPE + p-RoPE</td></tr>
+    <tr><td>Normalisation</td><td class="muted">conceptual</td><td class="muted">LayerNorm</td><td class="highlight">RMSNorm × 4/layer</td></tr>
+    <tr><td>Modalities</td><td class="muted">text</td><td class="muted">text</td><td class="highlight">Text + Image (+ Audio on small)</td></tr>
+    <tr><td>Total parameters</td><td class="muted">~4K</td><td class="muted">~100K</td><td class="highlight">30.7B (32.7B raw)</td></tr>
+  </table>
+
+  <div style="display:flex;gap:1rem;margin-top:2rem;flex-wrap:wrap;">
+    <a href="https://raj8github.github.io/zero2ai/" target="_blank" style="text-decoration:none;">
+      <button class="secondary">← Start: zero2ai</button>
+    </a>
+    <a href="https://raj8github.github.io/how-gpt-works/" target="_blank" style="text-decoration:none;">
+      <button class="secondary">← microGPT dissection</button>
+    </a>
+    <a href="https://huggingface.co/google/gemma-4-31B-it" target="_blank" style="text-decoration:none;">
+      <button>Gemma 4 on HuggingFace ↗</button>
+    </a>
+  </div>
+</div>
+
+<footer>
+  <p>Part 3 of the <em>From Zero to AI</em> series · <a href="https://raj8github.github.io/zero2ai/">zero2ai</a> · <a href="https://raj8github.github.io/how-gpt-works/">microGPT</a></p>
+  <p>Built from <a href="https://huggingface.co/google/gemma-4-31B-it">google/gemma-4-31B-it</a> config.json, model.safetensors.index.json & HuggingFace blog · Apache 2.0</p>
+  <p style="margin-top:0.5rem;font-size:0.62rem;">Architecture: 60 layers · 5376 hidden · 32/16/4 GQA heads · 1024 window · 256K context · BF16 · 62.6 GB</p>
+</footer>
+
+<script>
+// ─── READING PROGRESS ───
+window.addEventListener('scroll', () => {
+  const pct = window.scrollY / (document.body.scrollHeight - window.innerHeight);
+  document.getElementById('rp').style.width = (pct * 100) + '%';
+});
+
+// ─── FILE LIST ───
+const FILES = [
+  { name: 'model-00001-of-00002.safetensors', size: '49.8 GB', icon: '🧮', color: '#2a6e9e',
+    detail: `<strong>The primary weight shard.</strong> Contains: the 262K×5376 embedding table (~2.8 GB), the full vision encoder (27 ViT layers, ~550M params), and decoder layers 0–~50. Stored in bfloat16 — 2 bytes per weight.<br><br>"Safetensors" format means weights can't contain executable code (unlike older .pkl files). The file is memory-mappable — the OS loads only the weights actually needed for the current layer during inference.` },
+  { name: 'model-00002-of-00002.safetensors', size: '12.8 GB', icon: '🧮', color: '#2a6e9e',
+    detail: `<strong>The second weight shard.</strong> Contains decoder layers ~50–60 and the final layer norm. Note: the <em>output projection</em> (LM head) is NOT stored separately because <code>tie_word_embeddings: true</code> — it reuses the embedding table from shard 1 (transposed).` },
+  { name: 'model.safetensors.index.json', size: '120 kB', icon: '📋', color: '#4a8c5c',
+    detail: `<strong>The manifest.</strong> A JSON file mapping every tensor name to its shard file. Reports total_parameters: 32,682,372,656. This is loaded first when you call <code>from_pretrained()</code> — the library reads this map to know where each weight lives before loading anything else.` },
+  { name: 'config.json', size: '4.62 kB', icon: '⚙️', color: '#8a4a9e',
+    detail: `<strong>The architecture blueprint.</strong> Specifies everything needed to instantiate the model in code: 60 layers, hidden_size=5376, attention head counts, layer types (sliding vs full), sliding_window=1024, max_position_embeddings=262144, vocab_size=262144, final_logit_softcapping=30.0, both vision and text configs. No weights — just the shape of the model.` },
+  { name: 'tokenizer.json', size: '32.2 MB', icon: '🔤', color: '#9e7a2a',
+    detail: `<strong>The BPE vocabulary.</strong> Contains 262,144 token entries with their merge rules (how subword pieces are assembled), vocab mapping (token string → integer ID), and special token definitions. Large because it covers 140+ languages with rich multilingual subword coverage. The tokenizer runs on CPU before any model compute.` },
+  { name: 'chat_template.jinja', size: '12 kB', icon: '💬', color: '#c05a2a',
+    detail: `<strong>The prompt format contract.</strong> A Jinja2 template that wraps your messages in the exact format Gemma 4 was instruction-tuned on. Handles: system prompts, user/assistant turn alternation, the thinking mode tokens (&lt;|think|&gt;, &lt;|channel&gt;thought, &lt;channel|&gt;), and multimodal tokens for images/audio/video. Getting this wrong produces garbage output.` },
+  { name: 'generation_config.json', size: '208 B', icon: '🎛️', color: '#4a8c5c',
+    detail: `<strong>Default sampling params.</strong> temperature=1.0, top_p=0.95, top_k=64, eos_token_ids=[1, 106]. These are sensible defaults for instruction following. Override temperature lower (e.g. 0.3) for factual tasks, higher (e.g. 1.4) for creative writing.` },
+  { name: 'processor_config.json', size: '1.69 kB', icon: '🖼️', color: '#c05a2a',
+    detail: `<strong>Vision preprocessing config.</strong> Specifies how images are converted before entering the vision encoder: resize strategy for variable aspect ratios, supported token budgets (70/140/280/560/1120), normalization parameters. default_output_length=280 means by default each image uses 280 visual tokens in the decoder's context.` },
+  { name: 'tokenizer_config.json', size: '2.07 kB', icon: '📝', color: '#9e7a2a',
+    detail: `<strong>Tokenizer class config.</strong> Specifies which tokenizer class to use and lists all special token mappings: bos=2, eos=1, pad=0, image_token=258880, boi=255999, eoi=258882, audio_token=258881, video_token=258884. The IDs above 255K are in the extended vocabulary beyond the base 256K BPE tokens.` },
+];
+
+const fileList = document.getElementById('file-list');
+FILES.forEach((f, i) => {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:0.75rem;padding:0.6rem 0.75rem;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--bg);transition:all 0.2s;';
+  row.innerHTML = `<span>${f.icon}</span><span style="font-family:var(--mono);font-size:0.75rem;color:${f.color};flex:1;">${f.name}</span><span style="font-family:var(--mono);font-size:0.68rem;color:var(--muted);">${f.size}</span>`;
+  row.addEventListener('click', () => {
+    document.querySelectorAll('#file-list > div').forEach(r => r.style.background = 'var(--bg)');
+    row.style.background = `rgba(${f.color === '#2a6e9e' ? '42,110,158' : f.color === '#4a8c5c' ? '74,140,92' : '192,90,42'},0.08)`;
+    document.getElementById('file-detail').innerHTML = f.detail;
+  });
+  fileList.appendChild(row);
+});
+
+// ─── TOKENISER ───
+function runTokenise() {
+  const text = document.getElementById('tok-input').value;
+  const out = document.getElementById('tok-output');
+  const meta = document.getElementById('tok-meta');
+  out.innerHTML = '';
+  
+  const words = text.split(/(\s+)/g).filter(w => w.trim());
+  let tokens = [], id = 200;
+  words.forEach((word, wi) => {
+    if (word.length > 6 && Math.random() > 0.4) {
+      const cut = Math.floor(word.length * 0.55);
+      tokens.push({ t: (wi === 0 ? '' : '▁') + word.slice(0, cut), type: 'sub', id: id++ });
+      tokens.push({ t: word.slice(cut), type: 'sub', id: id++ });
+    } else {
+      tokens.push({ t: (wi === 0 ? '' : '▁') + word, type: 'word', id: id++ });
+    }
+  });
+  
+  tokens.forEach((tok, i) => {
+    setTimeout(() => {
+      const el = document.createElement('span');
+      el.className = `tok ${tok.type}`;
+      el.style.animationDelay = `${i * 0.04}s`;
+      el.title = `ID: ${tok.id}`;
+      el.textContent = tok.t;
+      out.appendChild(el);
+    }, i * 40);
+  });
+  setTimeout(() => {
+    meta.textContent = `${tokens.length} tokens · each → row in embed_tokens[262144, 5376] · similar meanings → nearby vectors`;
+  }, tokens.length * 40 + 50);
+}
+runTokenise();
+
+// ─── LAYERS ───
+const LAYER_TYPES = [];
+for (let g = 0; g < 10; g++) {
+  for (let s = 0; s < 5; s++) LAYER_TYPES.push('sliding');
+  LAYER_TYPES.push('global');
+}
+
+const layerGrid = document.getElementById('layer-grid');
+LAYER_TYPES.forEach((type, i) => {
+  const chip = document.createElement('div');
+  chip.className = `layer-chip ${type}`;
+  chip.textContent = i;
+  chip.title = `Layer ${i}: ${type}`;
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.layer-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    showLayerDetail(i, type);
+  });
+  layerGrid.appendChild(chip);
+});
+
+function showLayerDetail(i, type) {
+  const isGlobal = type === 'global';
+  const box = document.getElementById('layer-detail-box');
+  const kvHeads = isGlobal ? 4 : 16;
+  const headDim = isGlobal ? 512 : 256;
+  const shard = i < 38 ? 1 : 2;
+  
+  const weights = [
+    { name: 'self_attn.q_proj.weight', shape: '[8192, 5376]', note: '32 Q heads × 256 dim' },
+    { name: 'self_attn.k_proj.weight', shape: isGlobal ? '[2048, 5376]' : '[4096, 5376]', note: `${kvHeads} KV heads × ${headDim/2} dim${isGlobal ? ' (K=V)' : ''}` },
+    { name: 'self_attn.v_proj.weight', shape: isGlobal ? '[2048, 5376]' : '[4096, 5376]', note: `${kvHeads} KV heads × ${headDim/2} dim` },
+    { name: 'self_attn.o_proj.weight', shape: '[5376, 8192]', note: 'combine all heads → hidden' },
+    { name: 'self_attn.q_norm.weight', shape: '[256]', note: 'per-dim scale on Q vectors' },
+    { name: 'self_attn.k_norm.weight', shape: '[256]', note: 'per-dim scale on K vectors' },
+    { name: 'mlp.gate_proj.weight', shape: '[21504, 5376]', note: 'GELU gate — filters features' },
+    { name: 'mlp.up_proj.weight', shape: '[21504, 5376]', note: 'content — what to compute' },
+    { name: 'mlp.down_proj.weight', shape: '[5376, 21504]', note: 'compress back to hidden_size' },
+    { name: 'layer_scalar', shape: '[1]', note: 'volume control on residual' },
+  ];
+  
+  box.innerHTML = `
+    <div class="ld-title" style="color:${isGlobal ? 'var(--accent4)' : 'var(--accent2)'}">
+      Layer ${i} · ${isGlobal ? '🌐 Global Full Attention' : '🔍 Sliding Window Attention'}
+    </div>
+    <div class="ld-grid">
+      <div class="ld-item"><div class="k">KV Heads</div><div class="v" style="color:${isGlobal ? 'var(--accent4)' : 'var(--accent2)'}">${kvHeads}</div></div>
+      <div class="ld-item"><div class="k">Head Dim</div><div class="v" style="color:${isGlobal ? 'var(--accent4)' : 'var(--accent2)'}">${headDim}</div></div>
+      <div class="ld-item"><div class="k">Window</div><div class="v" style="color:${isGlobal ? 'var(--accent4)' : 'var(--accent2)'}">${isGlobal ? '256K' : '1024'}</div></div>
+      <div class="ld-item"><div class="k">RoPE θ</div><div class="v" style="color:${isGlobal ? 'var(--accent4)' : 'var(--accent2)'}">${isGlobal ? '1,000,000' : '10,000'}</div></div>
+      <div class="ld-item"><div class="k">K=V?</div><div class="v" style="color:${isGlobal ? 'var(--accent4)' : 'var(--accent2)'}">${isGlobal ? 'Yes ✓' : 'No'}</div></div>
+      <div class="ld-item"><div class="k">Shard</div><div class="v">0000${shard}</div></div>
+    </div>
+    <div class="ld-weights">
+      ${weights.map(w => `<div class="ld-weight"><span class="wname">${w.name}</span><span class="wshape">${w.shape}</span><span style="font-size:0.62rem;color:var(--muted);">${w.note}</span></div>`).join('')}
+    </div>
+  `;
+}
+
+// ─── EMBED CANVAS ───
+let embedAnimId = null;
+function animateEmbed() {
+  const canvas = document.getElementById('embed-canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2; canvas.height = 220 * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth / 2, H = 220;
+  
+  let frame = 0;
+  if (embedAnimId) cancelAnimationFrame(embedAnimId);
+  
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#1e1c18';
+    ctx.fillRect(0, 0, W, H);
+    
+    const t = frame / 60;
+    const tokenId = Math.floor(4821 + Math.sin(t * 0.5) * 50);
+    
+    // Left: Token ID box
+    const bx = 30, by = 60, bw = 100, bh = 50;
+    ctx.fillStyle = 'rgba(192,90,42,0.15)';
+    ctx.strokeStyle = '#c05a2a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#c05a2a';
+    ctx.font = 'bold 11px IBM Plex Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('Token ID', bx + bw/2, by + 18);
+    ctx.font = 'bold 16px IBM Plex Mono';
+    ctx.fillText(tokenId, bx + bw/2, by + 38);
+    
+    // Arrow
+    const progress = (t % 2) / 2;
+    const ax1 = bx + bw + 10, ax2 = W/2 - 10;
+    const arrowX = ax1 + progress * (ax2 - ax1);
+    ctx.strokeStyle = '#c05a2a';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(ax1, H/2); ctx.lineTo(arrowX, H/2); ctx.stroke();
+    ctx.setLineDash([]);
+    
+    // Matrix
+    const mx = W/2, my = 20, mw = 80, mh = H - 40;
+    const rows = 16, cols = 6;
+    const cw = mw/cols, ch = mh/rows;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const highlight = r === (tokenId % rows);
+        const v = Math.abs(Math.sin(r * 0.7 + c * 1.1 + t * 0.3)) * (highlight ? 1 : 0.3);
+        ctx.fillStyle = highlight ? `rgba(42,110,158,${0.3 + v * 0.7})` : `rgba(80,80,80,${v * 0.6})`;
+        ctx.fillRect(mx + c * cw + 1, my + r * ch + 1, cw - 2, ch - 2);
+      }
+    }
+    ctx.fillStyle = '#5a8aa0';
+    ctx.font = '9px IBM Plex Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('embed_tokens', mx + mw/2, my - 8);
+    ctx.fillText('[262144, 5376]', mx + mw/2, H - 6);
+    
+    // Right: embedding vector
+    const vx = mx + mw + 20, vy = 20, vw = W - vx - 20, vh = H - 40;
+    ctx.fillStyle = 'rgba(42,110,158,0.1)';
+    ctx.strokeStyle = 'rgba(42,110,158,0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(vx, vy, vw, vh, 4); ctx.fill(); ctx.stroke();
+    
+    // Mini bars showing the selected row
+    const barW = vw / 40;
+    for (let i = 0; i < 40; i++) {
+      const val = Math.sin(i * 0.8 + tokenId * 0.1 + t * 0.2);
+      const bh2 = (Math.abs(val) * 0.4 + 0.1) * vh;
+      ctx.fillStyle = val > 0 ? 'rgba(42,110,158,0.8)' : 'rgba(192,90,42,0.6)';
+      ctx.fillRect(vx + i * barW + 1, vy + vh/2 - (val > 0 ? bh2 : 0), barW - 2, Math.abs(val) * vh * 0.4 + 4);
+    }
+    ctx.fillStyle = '#5a8aa0';
+    ctx.font = '9px IBM Plex Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('Token vector [5376 dims]', vx + vw/2, vy - 8);
+    ctx.fillText('(showing 40 of 5376)', vx + vw/2, H - 6);
+    
+    frame++;
+    embedAnimId = requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+setTimeout(() => animateEmbed(), 200);
+
+// ─── ATTENTION ───
+let attnType = 'sliding';
+function setAttn(type) {
+  attnType = type;
+  document.getElementById('btn-sliding').className = type === 'sliding' ? '' : 'secondary';
+  document.getElementById('btn-full').className = type === 'full' ? '' : 'secondary';
+  document.getElementById('attn-label').textContent = type === 'sliding'
+    ? 'Each token attends only within its 1024-token window'
+    : 'Every token attends to all previous tokens (256K context)';
+  drawAttn();
+  drawAttnDetail();
+}
+
+function drawAttn() {
+  const canvas = document.getElementById('attn-matrix');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2; canvas.height = 260 * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth / 2, H = 260;
+  ctx.fillStyle = '#f0ede6'; ctx.fillRect(0, 0, W, H);
+  
+  const N = 16, win = 5;
+  const cw = (W - 60) / N, ch = (H - 60) / N;
+  const ox = 40, oy = 20;
+  
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      const causal = c <= r;
+      const inWindow = r - c < win;
+      const visible = causal && (attnType === 'full' || inWindow);
+      const intensity = visible ? 0.15 + (1 - (r - c) / N) * 0.65 : 0;
+      
+      ctx.fillStyle = visible
+        ? `rgba(${attnType === 'sliding' ? '42,110,158' : '138,74,158'},${intensity})`
+        : 'rgba(200,195,185,0.3)';
+      ctx.fillRect(ox + c * cw + 1, oy + r * ch + 1, cw - 2, ch - 2);
+    }
+  }
+  
+  ctx.fillStyle = '#7a7268'; ctx.font = '9px IBM Plex Mono'; ctx.textAlign = 'center';
+  ctx.fillText('← Source tokens (Keys)', ox + N * cw / 2, H - 4);
+  ctx.save(); ctx.translate(10, oy + N * ch / 2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('Query tokens →', 0, 0); ctx.restore();
+  
+  if (attnType === 'sliding') {
+    ctx.strokeStyle = 'rgba(192,90,42,0.5)'; ctx.lineWidth = 1.5;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    for (let r = 0; r < N; r++) {
+      ctx.moveTo(ox + Math.max(0, r - win) * cw, oy + r * ch);
+      ctx.lineTo(ox + r * cw + cw, oy + r * ch + ch);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+}
+
+function drawAttnDetail() {
+  const canvas = document.getElementById('attn-detail');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2; canvas.height = 260 * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth / 2, H = 260;
+  ctx.fillStyle = '#f0ede6'; ctx.fillRect(0, 0, W, H);
+  
+  const isGlobal = attnType === 'full';
+  const col = isGlobal ? '#8a4a9e' : '#2a6e9e';
+  
+  const steps = [
+    { label: 'x (hidden)', sub: '[seq, 5376]', y: 30 },
+    { label: 'Q proj', sub: '[seq, 8192]', y: 80 },
+    { label: 'q_norm', sub: 'stabilise', y: 115 },
+    { label: 'K proj', sub: isGlobal ? '[seq, 2048]' : '[seq, 4096]', y: 150 },
+    { label: 'Q·Kᵀ / √d', sub: 'scores', y: 185 },
+    { label: 'softmax', sub: 'weights', y: 215 },
+    { label: '× V → o_proj', sub: '[seq, 5376]', y: 245 },
+  ];
+  
+  ctx.font = 'bold 9px IBM Plex Mono';
+  ctx.textAlign = 'left';
+  
+  steps.forEach((s, i) => {
+    const x = 15;
+    ctx.fillStyle = col + '22';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(x, s.y - 12, 160, 20, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = col;
+    ctx.fillText(s.label, x + 6, s.y + 1);
+    ctx.fillStyle = '#7a7268';
+    ctx.font = '8px IBM Plex Mono';
+    ctx.fillText(s.sub, x + 6, s.y + 11);
+    ctx.font = 'bold 9px IBM Plex Mono';
+    
+    if (i < steps.length - 1) {
+      ctx.strokeStyle = '#c4bfb0'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + 80, s.y + 8); ctx.lineTo(x + 80, steps[i+1].y - 12); ctx.stroke();
+    }
+  });
+  
+  // RoPE indicator
+  ctx.fillStyle = 'rgba(158,122,42,0.1)';
+  ctx.strokeStyle = '#9e7a2a';
+  ctx.lineWidth = 1; ctx.setLineDash([2,2]);
+  ctx.beginPath(); ctx.roundRect(180, 75, 75, 90, 4); ctx.fill(); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#9e7a2a'; ctx.font = 'bold 8px IBM Plex Mono';
+  ctx.fillText('RoPE', 200, 95);
+  ctx.font = '7px IBM Plex Mono';
+  ctx.fillStyle = '#7a7268';
+  ctx.fillText(isGlobal ? 'p-RoPE' : 'Standard', 195, 110);
+  ctx.fillText(isGlobal ? 'θ=1M' : 'θ=10K', 197, 123);
+  ctx.fillText(isGlobal ? '25% dims' : 'all dims', 194, 136);
+  ctx.fillText('rotated', 200, 149);
+}
+
+setTimeout(() => { drawAttn(); drawAttnDetail(); }, 200);
+
+// ─── MLP CANVAS ───
+let mlpAnimId = null;
+function animateMLP() {
+  const canvas = document.getElementById('mlp-canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2; canvas.height = 170 * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth / 2, H = 170;
+  
+  let frame = 0;
+  if (mlpAnimId) cancelAnimationFrame(mlpAnimId);
+  
+  function draw() {
+    ctx.fillStyle = '#f7f4ee'; ctx.fillRect(0, 0, W, H);
+    
+    const t = frame / 90;
+    const stages = [
+      { label: 'x', dim: 5376, color: '#2a6e9e', x: 0.07 },
+      { label: 'gate\n(GELU)', dim: 21504, color: '#8a4a9e', x: 0.28 },
+      { label: 'up', dim: 21504, color: '#4a8c5c', x: 0.48 },
+      { label: 'gate × up', dim: 21504, color: '#9e7a2a', x: 0.66 },
+      { label: 'down\n(output)', dim: 5376, color: '#2a6e9e', x: 0.87 },
+    ];
+    
+    const ops = ['gate_proj\n×W₁', 'up_proj\n×W₂', 'hadamard\n×', 'down_proj\n×W₃'];
+    
+    stages.forEach((s, i) => {
+      const x = s.x * W;
+      const maxH = H - 50;
+      const barH = (s.dim / 21504) * maxH;
+      const y = (H - 30 - barH) / 2 + 10;
+      
+      // Animated pulse
+      const pulse = 0.8 + 0.2 * Math.sin(t * Math.PI * 2 - i * 0.8);
+      
+      ctx.fillStyle = s.color + '20';
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = pulse;
+      ctx.beginPath(); ctx.roundRect(x - 22, y, 44, barH, 5); ctx.fill(); ctx.stroke();
+      ctx.globalAlpha = 1;
+      
+      ctx.fillStyle = s.color;
+      ctx.font = 'bold 8px IBM Plex Mono';
+      ctx.textAlign = 'center';
+      s.label.split('\n').forEach((line, li) => {
+        ctx.fillText(line, x, y - 10 + li * 10);
+      });
+      ctx.fillStyle = '#7a7268';
+      ctx.font = '7px IBM Plex Mono';
+      ctx.fillText(s.dim.toLocaleString(), x, y + barH + 12);
+      
+      // Arrow + op label
+      if (i < stages.length - 1) {
+        const nx = stages[i+1].x * W;
+        const arrowProg = Math.min(1, Math.max(0, (t % 1) * stages.length - i));
+        const arrowX = x + 22 + arrowProg * (nx - 22 - x - 22);
+        
+        ctx.strokeStyle = '#d8d2c4'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x + 22, H/2 - 5); ctx.lineTo(arrowX, H/2 - 5); ctx.stroke();
+        
+        ctx.fillStyle = '#7a7268'; ctx.font = '7px IBM Plex Mono';
+        ops[i].split('\n').forEach((line, li) => {
+          ctx.fillText(line, (x + nx) / 2, H - 12 + li * 9);
+        });
+      }
+    });
+    
+    frame++;
+    mlpAnimId = requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+setTimeout(() => animateMLP(), 300);
+
+// ─── ROPE CANVAS ───
+let ropeAnimId = null;
+function animateRoPE() {
+  const canvas = document.getElementById('rope-canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2; canvas.height = 240 * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth / 2, H = 240;
+  
+  let frame = 0;
+  if (ropeAnimId) cancelAnimationFrame(ropeAnimId);
+  
+  function draw() {
+    ctx.fillStyle = '#1e1c18'; ctx.fillRect(0, 0, W, H);
+    
+    const t = frame / 60;
+    const positions = [0, 5, 20, 100];
+    const posColors = ['#c05a2a', '#2a6e9e', '#4a8c5c', '#8a4a9e'];
+    const numPairs = 24;
+    
+    const pairW = (W - 100) / numPairs;
+    const ox = 70;
+    
+    // Grid labels
+    ctx.fillStyle = '#5a5248'; ctx.font = '8px IBM Plex Mono'; ctx.textAlign = 'center';
+    ctx.fillText('← dim pair 0 (fast rotation)         dim pair 127 (slow rotation) →', W/2, H - 8);
+    
+    positions.forEach((pos, pi) => {
+      const py = 25 + pi * 50;
+      
+      ctx.fillStyle = posColors[pi];
+      ctx.font = 'bold 9px IBM Plex Mono';
+      ctx.textAlign = 'right';
+      ctx.fillText(`pos=${pos}`, ox - 8, py + 4);
+      
+      for (let k = 0; k < numPairs; k++) {
+        const theta = Math.pow(10000, -2 * k / (numPairs * 2));
+        const angle = pos * theta + t * 0.3;
+        const x = ox + k * pairW + pairW / 2;
+        const r = 16;
+        
+        // Circle bg
+        ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+        ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.arc(x, py, r, 0, Math.PI * 2); ctx.stroke();
+        
+        // Rotation vector
+        ctx.strokeStyle = posColors[pi];
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, py);
+        ctx.lineTo(x + Math.cos(angle) * r, py + Math.sin(angle) * r);
+        ctx.stroke();
+        
+        ctx.fillStyle = posColors[pi];
+        ctx.beginPath(); ctx.arc(x, py, 2, 0, Math.PI * 2); ctx.fill();
+      }
+    });
+    
+    // Legend
+    positions.forEach((pos, pi) => {
+      ctx.fillStyle = posColors[pi]; ctx.font = 'bold 8px IBM Plex Mono'; ctx.textAlign = 'left';
+      ctx.fillText(`pos=${pos}`, 10, 30 + pi * 12);
+    });
+    
+    frame++;
+    ropeAnimId = requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+setTimeout(() => animateRoPE(), 400);
+
+// ─── VISION ───
+function drawVision() {
+  const canvas = document.getElementById('vision-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2; canvas.height = 220 * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth / 2, H = 220;
+  
+  ctx.fillStyle = '#f7f4ee'; ctx.fillRect(0, 0, W, H);
+  
+  const budget = parseInt(document.getElementById('patch-budget').value);
+  const imgW = 180, imgH = 140, imgX = 10, imgY = 30;
+  
+  // Draw image
+  const grad = ctx.createLinearGradient(imgX, imgY, imgX + imgW, imgY + imgH);
+  grad.addColorStop(0, '#dde8f0'); grad.addColorStop(1, '#c8d8e8');
+  ctx.fillStyle = grad; ctx.fillRect(imgX, imgY, imgW, imgH);
+  ctx.fillStyle = 'rgba(42,110,158,0.3)'; ctx.fillRect(imgX+10, imgY+15, 60, 50);
+  ctx.fillStyle = 'rgba(74,140,92,0.3)'; ctx.fillRect(imgX+100, imgY+30, 65, 70);
+  ctx.fillStyle = 'rgba(192,90,42,0.2)'; ctx.fillRect(imgX+40, imgY+90, 90, 35);
+  
+  // Patch grid
+  const cols = Math.ceil(Math.sqrt(budget * imgW / imgH));
+  const rows = Math.ceil(budget / cols);
+  const pw = imgW / cols, ph = imgH / rows;
+  
+  ctx.strokeStyle = 'rgba(42,110,158,0.35)'; ctx.lineWidth = 0.5;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      ctx.strokeRect(imgX + c * pw, imgY + r * ph, pw, ph);
+    }
+  }
+  
+  ctx.strokeStyle = '#2a2520'; ctx.lineWidth = 1;
+  ctx.strokeRect(imgX, imgY, imgW, imgH);
+  
+  ctx.fillStyle = '#2a2520'; ctx.font = 'bold 9px IBM Plex Mono'; ctx.textAlign = 'center';
+  ctx.fillText('Input Image', imgX + imgW/2, imgY - 8);
+  ctx.fillStyle = '#7a7268'; ctx.font = '8px IBM Plex Mono';
+  ctx.fillText(`${cols}×${rows} patches = ${budget} tokens`, imgX + imgW/2, imgY + imgH + 14);
+  
+  // Arrow to ViT
+  const vitX = 220, vitY = 30, vitW = 90, vitH = 140;
+  ctx.strokeStyle = '#2a6e9e'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(imgX + imgW + 5, imgY + imgH/2);
+  ctx.lineTo(vitX - 5, vitY + vitH/2); ctx.stroke();
+  ctx.fillStyle = '#7a7268'; ctx.font = '7px IBM Plex Mono'; ctx.textAlign = 'center';
+  ctx.fillText('16×16 px patches', imgX + imgW + 30, imgY + imgH/2 - 8);
+  ctx.fillText('→ [1152] each', imgX + imgW + 30, imgY + imgH/2 + 4);
+  
+  // ViT box
+  ctx.fillStyle = 'rgba(42,110,158,0.08)';
+  ctx.strokeStyle = '#2a6e9e'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(vitX, vitY, vitW, vitH, 6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#2a6e9e'; ctx.font = 'bold 9px IBM Plex Mono'; ctx.textAlign = 'center';
+  ctx.fillText('Vision ViT', vitX + vitW/2, vitY + 18);
+  ctx.fillStyle = '#7a7268'; ctx.font = '8px IBM Plex Mono';
+  ctx.fillText('27 layers', vitX + vitW/2, vitY + 33);
+  ctx.fillText('1152 dims', vitX + vitW/2, vitY + 46);
+  ctx.fillText('Bidirectional', vitX + vitW/2, vitY + 59);
+  ctx.fillText('attention', vitX + vitW/2, vitY + 71);
+  ctx.fillText('2D RoPE', vitX + vitW/2, vitY + 84);
+  
+  // Projection arrow
+  const projX = vitX + vitW + 5, projY = 30, projW = 80, projH = 50;
+  ctx.strokeStyle = '#9e7a2a'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(vitX + vitW + 5, vitY + vitH/2);
+  ctx.lineTo(projX + 5, projY + projH/2); ctx.stroke();
+  
+  // embed_vision projection
+  ctx.fillStyle = 'rgba(158,122,42,0.08)';
+  ctx.strokeStyle = '#9e7a2a'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(projX + 10, projY, projW, projH, 6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#9e7a2a'; ctx.font = 'bold 8px IBM Plex Mono'; ctx.textAlign = 'center';
+  ctx.fillText('embed_vision', projX + 10 + projW/2, projY + 16);
+  ctx.fillStyle = '#7a7268'; ctx.font = '7px IBM Plex Mono';
+  ctx.fillText('[5376, 1152]', projX + 10 + projW/2, projY + 28);
+  ctx.fillText('1152 → 5376', projX + 10 + projW/2, projY + 40);
+  
+  // Output tokens
+  ctx.strokeStyle = '#4a8c5c'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(projX + 10 + projW, projY + projH/2);
+  ctx.lineTo(W - 10, H/2); ctx.stroke();
+  ctx.fillStyle = '#4a8c5c'; ctx.font = 'bold 8px IBM Plex Mono'; ctx.textAlign = 'center';
+  ctx.fillText(`${budget} visual`, W - 40, H/2 - 20);
+  ctx.fillText('tokens', W - 40, H/2 - 8);
+  ctx.fillText('[5376]', W - 40, H/2 + 4);
+  ctx.fillText('each', W - 40, H/2 + 16);
+  ctx.fillStyle = '#7a7268'; ctx.font = '7px IBM Plex Mono';
+  ctx.fillText('→ concat into text stream', W - 50, H/2 + 30);
+}
+
+setTimeout(() => drawVision(), 400);
+
+// ─── KV CACHE ───
+let kvAnimId = null;
+function animateKV() {
+  const canvas = document.getElementById('kv-canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2; canvas.height = 200 * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth / 2, H = 200;
+  
+  let frame = 0;
+  if (kvAnimId) cancelAnimationFrame(kvAnimId);
+  
+  const maxTokens = 80;
+  const tokens = [];
+  
+  function draw() {
+    ctx.fillStyle = '#f7f4ee'; ctx.fillRect(0, 0, W, H);
+    
+    // Add new token occasionally
+    if (frame % 8 === 0 && tokens.length < maxTokens) {
+      tokens.push({ step: frame });
+    }
+    
+    const cellW = (W - 40) / 60;
+    const cellH = 12;
+    
+    // Draw layers
+    for (let layer = 0; layer < 60; layer++) {
+      const x = 20 + layer * cellW;
+      const isGlobal = (layer + 1) % 6 === 0;
+      const y = isGlobal ? 30 : 80;
+      
+      // Cached tokens
+      const maxVisible = isGlobal ? tokens.length : Math.min(tokens.length, 15);
+      for (let t = 0; t < maxVisible; t++) {
+        const age = tokens.length - t;
+        const alpha = Math.max(0.1, 1 - age * 0.03);
+        ctx.fillStyle = isGlobal
+          ? `rgba(138,74,158,${alpha * 0.7})`
+          : `rgba(42,110,158,${alpha * 0.7})`;
+        ctx.fillRect(x, y + t * 1.5, cellW - 1, 1.5);
+      }
+      
+      // Layer outline
+      ctx.strokeStyle = isGlobal ? '#8a4a9e' : '#2a6e9e';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(x, y, cellW - 1, isGlobal ? 60 : 25);
+    }
+    
+    // Labels
+    ctx.fillStyle = '#8a4a9e'; ctx.font = 'bold 9px IBM Plex Mono'; ctx.textAlign = 'left';
+    ctx.fillText('Global layers (10): full context KV, K=V, 4 heads', 20, 20);
+    ctx.fillStyle = '#2a6e9e';
+    ctx.fillText(`Sliding layers (50): window-bounded KV, 16 heads (shown: ${Math.min(tokens.length, 15)} of window)`, 20, 70);
+    
+    const status = `${tokens.length} tokens generated · sliding cache bounded at 1024 · global grows with context`;
+    document.getElementById('kv-status').textContent = status;
+    
+    frame++;
+    if (tokens.length < maxTokens) {
+      kvAnimId = requestAnimationFrame(draw);
+    } else {
+      ctx.fillStyle = '#7a7268'; ctx.font = '9px IBM Plex Mono'; ctx.textAlign = 'center';
+      ctx.fillText('Sliding cache full (window=1024). Old tokens evicted. Global cache still growing.', W/2, H - 10);
+    }
+  }
+  draw();
+}
+
+setTimeout(() => animateKV(), 500);
+
+// ─── GENERATION ───
+const GEN_CORPUS = [
+  'The model processes tokens through 60 decoder layers',
+  'using hybrid attention where sliding window layers handle local context',
+  'and global attention layers integrate information across the full sequence',
+  'with proportional RoPE encoding for stable position signals at 256K context',
+  'The MLP stores factual knowledge in its gate and up projection weights',
+  'while the KV cache keeps generation fast by avoiding recomputation'
+].join(' ').split(' ');
+
+let genWords = [], genIdx = 0, genAutoTimer = null;
+const GEN_CANDIDATES = ['layers', 'attention', 'tokens', 'model', 'context', 'weights', 'head', 'matrix', 'vector', 'output', 'hidden', 'global'];
+
+function genStep() {
+  const word = GEN_CORPUS[genIdx % GEN_CORPUS.length];
+  genIdx++;
+  genWords.push(word);
+  
+  const out = document.getElementById('gen-output');
+  const prev = out.textContent.replace('|', '');
+  out.innerHTML = prev + ' <span class="gen-token-new">' + word + '</span><span class="cursor-blink"></span>';
+  
+  updateLogits(word);
+}
+
+function updateLogits(selected) {
+  const chart = document.getElementById('logit-bars');
+  chart.innerHTML = '';
+  
+  const words = [...GEN_CANDIDATES];
+  const probs = words.map(w => ({ w, p: Math.random() * 0.15 + 0.02 }));
+  const selIdx = words.indexOf(selected);
+  if (selIdx >= 0) probs[selIdx].p = 0.35 + Math.random() * 0.2;
+  probs.sort((a, b) => b.p - a.p);
+  const top = probs.slice(0, 10);
+  const maxP = top[0].p;
+  
+  top.forEach(({ w, p }) => {
+    const col = document.createElement('div');
+    col.className = 'logit-col';
+    const bar = document.createElement('div');
+    bar.className = 'logit-bar';
+    bar.style.height = (p / maxP * 70) + 'px';
+    bar.style.background = w === selected ? 'var(--accent2)' : 'var(--border2)';
+    const label = document.createElement('div');
+    label.className = 'logit-label';
+    label.style.color = w === selected ? 'var(--accent2)' : 'var(--muted)';
+    label.textContent = w;
+    col.appendChild(bar); col.appendChild(label);
+    chart.appendChild(col);
+  });
+}
+
+function genAuto() {
+  if (genAutoTimer) { clearInterval(genAutoTimer); genAutoTimer = null; return; }
+  genAutoTimer = setInterval(genStep, 500);
+  setTimeout(() => { if (genAutoTimer) { clearInterval(genAutoTimer); genAutoTimer = null; } }, 12000);
+}
+
+function genReset() {
+  if (genAutoTimer) { clearInterval(genAutoTimer); genAutoTimer = null; }
+  genWords = []; genIdx = 0;
+  document.getElementById('gen-output').innerHTML = '<span class="cursor-blink"></span>';
+  document.getElementById('logit-bars').innerHTML = '';
+}
+
+updateLogits('layers');
+
+// ─── FLOW CANVAS ───
+let flowAnimId = null, flowStep = -1;
+
+const FLOW_STEPS = [
+  { label: '1. Tokenise', sub: '"Hello" → [1234, 5678, ...]', color: '#c05a2a', x: 60, y: 30 },
+  { label: '2. Embed', sub: 'IDs → [5376] vectors via 262K×5376 table', color: '#2a6e9e', x: 60, y: 80 },
+  { label: '3. × 60 Layers', sub: 'Norm → Attn → Norm → MLP → residual × scalar', color: '#8a4a9e', x: 60, y: 130, tall: true },
+  { label: '4. Final RMSNorm', sub: 'Stabilise final hidden state', color: '#4a8c5c', x: 60, y: 220 },
+  { label: '5. LM Head', sub: 'hidden [5376] → logits [262144] (tied weights)', color: '#9e7a2a', x: 60, y: 268 },
+  { label: '6. Softcap + Sample', sub: 'tanh(x/30)×30 → softmax → top_k → top_p → token', color: '#c05a2a', x: 60, y: 316 },
+];
+
+function animateFlow() {
+  const canvas = document.getElementById('flow-canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2; canvas.height = 360 * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth / 2, H = 360;
+  
+  flowStep = 0;
+  if (flowAnimId) clearInterval(flowAnimId);
+  
+  ctx.fillStyle = '#f0ede6'; ctx.fillRect(0, 0, W, H);
+  
+  flowAnimId = setInterval(() => {
+    ctx.fillStyle = '#f0ede6'; ctx.fillRect(0, 0, W, H);
+    
+    FLOW_STEPS.forEach((s, i) => {
+      const bh = s.tall ? 60 : 34;
+      const active = i <= flowStep;
+      const current = i === flowStep;
+      
+      ctx.fillStyle = active ? s.color + '18' : 'rgba(200,195,185,0.2)';
+      ctx.strokeStyle = active ? s.color : '#d8d2c4';
+      ctx.lineWidth = current ? 2 : 1;
+      ctx.beginPath(); ctx.roundRect(s.x, s.y, W - 120, bh, 6); ctx.fill(); ctx.stroke();
+      
+      if (current) {
+        ctx.fillStyle = s.color;
+        ctx.beginPath(); ctx.arc(s.x + W - 120 + 12, s.y + bh/2, 5, 0, Math.PI * 2); ctx.fill();
+      }
+      
+      ctx.fillStyle = active ? s.color : '#a0a090';
+      ctx.font = `bold 10px IBM Plex Mono`;
+      ctx.textAlign = 'left';
+      ctx.fillText(s.label, s.x + 10, s.y + 14);
+      ctx.fillStyle = active ? '#5a5248' : '#b0a898';
+      ctx.font = '8px IBM Plex Mono';
+      ctx.fillText(s.sub, s.x + 10, s.y + (s.tall ? 48 : 27));
+      
+      // Arrow
+      if (i < FLOW_STEPS.length - 1 && active) {
+        const next = FLOW_STEPS[i + 1];
+        const ay = s.y + bh;
+        ctx.strokeStyle = s.color; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(s.x + 60, ay + 1); ctx.lineTo(s.x + 60, next.y - 1); ctx.stroke();
+      }
+    });
+    
+    flowStep++;
+    if (flowStep >= FLOW_STEPS.length) {
+      clearInterval(flowAnimId);
+      flowAnimId = null;
+    }
+  }, 600);
+}
+
+function resetFlow() {
+  if (flowAnimId) { clearInterval(flowAnimId); flowAnimId = null; }
+  const canvas = document.getElementById('flow-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f0ede6';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  flowStep = -1;
+}
+
+// ─── BENCHMARKS ───
+const BENCHES = [
+  { name: 'AIME 2026 (Math)', g4: 89.2, g3: 20.8, unit: '%' },
+  { name: 'Codeforces ELO', g4: 95, g3: 5, unit: '% of 2200', display4: '2150', display3: '110' },
+  { name: 'GPQA Diamond (Science)', g4: 84.3, g3: 42.4, unit: '%' },
+  { name: 'LiveCodeBench v6', g4: 80.0, g3: 29.1, unit: '%' },
+  { name: 'MMLU Pro (Knowledge)', g4: 85.2, g3: 67.6, unit: '%' },
+  { name: 'MRCR 128K (Long Context)', g4: 66.4, g3: 13.5, unit: '%' },
+  { name: 'MMMU Pro (Vision)', g4: 76.9, g3: 49.7, unit: '%' },
+  { name: 'BigBench Extra Hard', g4: 74.4, g3: 19.3, unit: '%' },
+];
+
+const benchContainer = document.getElementById('bench-container');
+BENCHES.forEach(b => {
+  const row = document.createElement('div');
+  row.className = 'bench-row';
+  row.innerHTML = `
+    <div class="bench-name">${b.name}</div>
+    <div class="bench-bars">
+      <div class="bench-bar-wrap">
+        <div class="bench-track">
+          <div class="bench-fill" style="width:${b.g4}%;background:var(--accent2);border-radius:3px;"></div>
+        </div>
+        <span class="bench-score" style="color:var(--accent2);font-family:var(--mono);">${b.display4 || b.g4 + b.unit}</span>
+        <span style="font-family:var(--mono);font-size:0.62rem;color:var(--accent3);">Gemma 4</span>
+      </div>
+      <div class="bench-bar-wrap">
+        <div class="bench-track">
+          <div class="bench-fill" style="width:${b.g3}%;background:var(--border2);border-radius:3px;"></div>
+        </div>
+        <span class="bench-score" style="color:var(--muted);font-family:var(--mono);">${b.display3 || b.g3 + b.unit}</span>
+        <span style="font-family:var(--mono);font-size:0.62rem;color:var(--muted);">Gemma 3</span>
+      </div>
+    </div>
+  `;
+  benchContainer.appendChild(row);
+});
+
+// ─── RESIZE HANDLER ───
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    drawAttn(); drawAttnDetail(); drawVision();
+  }, 200);
+});
+</script>
+</body>
+</html>
