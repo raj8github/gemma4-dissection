@@ -206,7 +206,7 @@ footer a{color:var(--blue)}
   <p style="color:var(--muted)">Before the deep dives, here's the full picture — every step that happens when Gemma 4 processes text. Each section below zooms into one of these stages.</p>
   <div class="demo">
     <div class="dtitle">Step through the full forward pass</div>
-    <canvas id="flow-canvas" height="380" style="border-radius:10px;background:#f8f5ef;border:1px solid var(--border)"></canvas>
+    <canvas id="flow-canvas" height="480" style="border-radius:10px;background:#f8f5ef;border:1px solid var(--border)"></canvas>
     <div style="display:flex;gap:.65rem;margin-top:.75rem">
       <button onclick="animateFlow()">▶ Step through</button>
       <button class="s" onclick="resetFlow()">Reset</button>
@@ -1102,7 +1102,7 @@ function resetFlow(){if(flowTimer){clearInterval(flowTimer);flowTimer=null;}flow
 function drawFlow(){
   const c=document.getElementById('flow-canvas'); if(!c)return;
   const dpr=window.devicePixelRatio||2;
-  c.width=c.offsetWidth*dpr; c.height=380*dpr;
+  c.width=c.offsetWidth*dpr; c.height=480*dpr;
   const ctx=c.getContext('2d'); ctx.scale(dpr,dpr);
   const W=c.width/dpr,H=c.height/dpr;
   ctx.fillStyle='#f8f5ef'; ctx.fillRect(0,0,W,H);
@@ -1111,9 +1111,14 @@ function drawFlow(){
     ctx.fillText('Press "Step through" to animate each stage →',W/2,H/2+16);
     return;
   }
-  const PX=28,bw=W-PX*2; let y=14;
+  // Calculate total height needed, then fit everything
+  const PX=24, bw=W-PX*2;
+  const STEP_H=42, TALL_H=66, GAP=7;
+  const totalH=FLOW.reduce((s,f)=>s+(f.tall?TALL_H:STEP_H)+GAP,0)-GAP;
+  let y=Math.max(10,(H-totalH)/2);
+
   FLOW.forEach((step,i)=>{
-    const bh=step.tall?72:46, gap=9;
+    const bh=step.tall?TALL_H:STEP_H;
     const active=i<=flowStep, current=i===flowStep;
     ctx.fillStyle=active?step.col+'14':'rgba(210,205,195,.22)';
     ctx.strokeStyle=active?(current?step.col:step.col+'80'):'#d5cfc1';
@@ -1122,22 +1127,22 @@ function drawFlow(){
     if(current){ctx.fillStyle=step.col;ctx.beginPath();ctx.arc(PX+bw-18,y+bh/2,6,0,Math.PI*2);ctx.fill();}
     ctx.fillStyle=active?step.col:'#b0a898';
     ctx.font='600 13px "Outfit",sans-serif'; ctx.textAlign='left';
-    ctx.fillText(step.label,PX+14,y+18);
+    ctx.fillText(step.label,PX+14,y+17);
     ctx.fillStyle=active?'#5a5040':'#b0a898';
     ctx.font='500 12px "Outfit",sans-serif';
-    ctx.fillText(step.sub,PX+14,y+(step.tall?36:32));
+    ctx.fillText(step.sub,PX+14,y+(step.tall?33:30));
     if(step.tall){
       ctx.fillStyle=active?step.col+'90':'#b0a898';
       ctx.font='500 11px "JetBrains Mono",monospace';
-      ctx.fillText('  RMSNorm → Attn → residual×scalar → RMSNorm → GeGLU MLP → residual  (repeated 60×)',PX+14,y+54);
+      ctx.fillText('  RMSNorm → Attn → residual×scalar → RMSNorm → GeGLU MLP → residual  (×60)',PX+14,y+50);
     }
     if(i<FLOW.length-1&&active){
       ctx.strokeStyle=step.col+'55'; ctx.lineWidth=1.5;
-      ctx.beginPath(); ctx.moveTo(PX+56,y+bh+1); ctx.lineTo(PX+56,y+bh+gap-1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(PX+56,y+bh+1); ctx.lineTo(PX+56,y+bh+GAP-1); ctx.stroke();
       ctx.fillStyle=step.col+'80';
-      ctx.beginPath(); ctx.moveTo(PX+56,y+bh+gap); ctx.lineTo(PX+50,y+bh+gap-6); ctx.lineTo(PX+62,y+bh+gap-6); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(PX+56,y+bh+GAP); ctx.lineTo(PX+50,y+bh+GAP-6); ctx.lineTo(PX+62,y+bh+GAP-6); ctx.fill();
     }
-    y+=bh+gap;
+    y+=bh+GAP;
   });
 }
 drawFlow();
